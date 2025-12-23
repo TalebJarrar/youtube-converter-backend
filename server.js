@@ -58,8 +58,11 @@ app.post('/api/info', async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ error: 'Failed to fetch media info' });
+    console.error(err);
+    if (process.env.NODE_ENV !== 'production') {
+      return res.status(500).json({ error: err.message || 'Failed to fetch media info', stack: err.stack });
+    }
+    res.status(500).json({ error: err.message || 'Failed to fetch media info' });
   }
 });
 
@@ -97,8 +100,11 @@ app.post('/api/download/mp3', async (req, res) => {
     }).pipe(res);
 
   } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ error: 'Audio processing failed' });
+    console.error(err);
+    if (process.env.NODE_ENV !== 'production') {
+      return res.status(500).json({ error: err.message || 'Audio processing failed', stack: err.stack });
+    }
+    res.status(500).json({ error: err.message || 'Audio processing failed' });
   }
 });
 
@@ -143,8 +149,11 @@ app.post('/api/download/mp4', async (req, res) => {
     }).pipe(res);
 
   } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ error: 'Video processing failed' });
+    console.error(err);
+    if (process.env.NODE_ENV !== 'production') {
+      return res.status(500).json({ error: err.message || 'Video processing failed', stack: err.stack });
+    }
+    res.status(500).json({ error: err.message || 'Video processing failed' });
   }
 });
 
