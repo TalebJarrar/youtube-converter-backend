@@ -1,14 +1,12 @@
-// Backend Server using yt-dlp (more stable than ytdl-core)
-// First install yt-dlp: npm install yt-dlp-exec express cors
-
+// Backend Server optimized for Render deployment
 const express = require('express');
-const ytdlp = require('yt-dlp-exec');
+const ytdl = require('@distube/ytdl-core');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
@@ -23,12 +21,7 @@ if (!fs.existsSync(DOWNLOADS_DIR)) {
 
 // Validate YouTube URL
 function isValidYouTubeUrl(url) {
-    const patterns = [
-        /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/,
-        /^(https?:\/\/)?(www\.)?youtube\.com\/watch\?v=.+$/,
-        /^(https?:\/\/)?(www\.)?youtu\.be\/.+$/
-    ];
-    return patterns.some(pattern => pattern.test(url));
+    return ytdl.validateURL(url);
 }
 
 // Get video info endpoint
@@ -36,29 +29,28 @@ app.post('/api/info', async (req, res) => {
     try {
         const { url } = req.body;
         
+        console.log('Fetching info for:', url);
+        
         if (!url || !isValidYouTubeUrl(url)) {
             return res.status(400).json({ error: 'Invalid YouTube URL' });
         }
         
-        // Get video info without downloading
-        const info = await ytdlp(url, {
-            dumpSingleJson: true,
-            noCheckCertificates: true,
-            noWarnings: true,
-            preferFreeFormats: true,
-        });
+        const info = await ytdl.getInfo(url);
+        const videoDetails = info.videoDetails;
+        
+        console.log('Video info fetched:', videoDetails.title);
         
         res.json({
-            title: info.title,
-            channel: info.uploader || info.channel,
-            thumbnail: info.thumbnail,
-            duration: info.duration,
-            videoId: info.id
+            title: videoDetails.title,
+            channel: videoDetails.author.name,
+            thumbnail: videoDetails.thumbnails[videoDetails.thumbnails.length - 1].url,
+            duration: videoDetails.lengthSeconds,
+            videoId: videoDetails.videoId
         });
         
     } catch (error) {
-        console.error('Error fetching video info:', error);
-        res.status(500).json({ error: 'Failed to fetch video information' });
+        console.error('Error fetching video info:', error.message);
+        res.status(500).json({ error: 'Failed to fetch video information. Please check the URL and try again.' });
     }
 });
 
@@ -67,47 +59,43 @@ app.post('/api/download/mp3', async (req, res) => {
     try {
         const { url } = req.body;
         
+        console.log('Downloading MP3 for:', url);
+        
         if (!url || !isValidYouTubeUrl(url)) {
             return res.status(400).json({ error: 'Invalid YouTube URL' });
         }
         
-        // Generate unique filename
-        const timestamp = Date.now();
-        const outputPath = path.join(DOWNLOADS_DIR, `${timestamp}.mp3`);
+        const info = await ytdl.getInfo(url);
+        const title = info.videoDetails.title.replace(/[^\w\s-]/g, '').substring(0, 100);
         
-        // Download audio
-        await ytdlp(url, {
-            extractAudio: true,
-            audioFormat: 'mp3',
-            audioQuality: 0, // Best quality
-            output: outputPath,
-            noCheckCertificates: true,
-            noWarnings: true,
-            preferFreeFormats: true,
+        console.log('Starting MP3 download:', title);
+        
+        res.header('Content-Disposition', `attachment; filename="${title}.mp3"`);
+        res.header('Content-Type', 'audio/mpeg');
+        
+        const stream = ytdl(url, {
+            quality: 'highestaudio',
+            filter: 'audioonly'
         });
         
-        // Get video info for filename
-        const info = await ytdlp(url, {
-            dumpSingleJson: true,
-            noCheckCertificates: true,
+        stream.pipe(res);
+        
+        stream.on('error', (error) => {
+            console.error('Stream error:', error.message);
+            if (!res.headersSent) {
+                res.status(500).json({ error: 'Download failed' });
+            }
         });
         
-        const title = info.title.replace(/[^\w\s-]/g, '').substring(0, 100);
-        
-        // Send file
-        res.download(outputPath, `${title}.mp3`, (err) => {
-            // Delete file after download
-            if (fs.existsSync(outputPath)) {
-                fs.unlinkSync(outputPath);
-            }
-            if (err) {
-                console.error('Download error:', err);
-            }
+        stream.on('end', () => {
+            console.log('MP3 download complete:', title);
         });
         
     } catch (error) {
-        console.error('Error downloading MP3:', error);
-        res.status(500).json({ error: 'Failed to download audio' });
+        console.error('Error downloading MP3:', error.message);
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Failed to download audio. Please try again.' });
+        }
     }
 });
 
@@ -116,51 +104,55 @@ app.post('/api/download/mp4', async (req, res) => {
     try {
         const { url } = req.body;
         
+        console.log('Downloading MP4 for:', url);
+        
         if (!url || !isValidYouTubeUrl(url)) {
             return res.status(400).json({ error: 'Invalid YouTube URL' });
         }
         
-        // Generate unique filename
-        const timestamp = Date.now();
-        const outputPath = path.join(DOWNLOADS_DIR, `${timestamp}.mp4`);
+        const info = await ytdl.getInfo(url);
+        const title = info.videoDetails.title.replace(/[^\w\s-]/g, '').substring(0, 100);
         
-        // Download video
-        await ytdlp(url, {
-            format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            output: outputPath,
-            noCheckCertificates: true,
-            noWarnings: true,
-            mergeOutputFormat: 'mp4',
+        console.log('Starting MP4 download:', title);
+        
+        res.header('Content-Disposition', `attachment; filename="${title}.mp4"`);
+        res.header('Content-Type', 'video/mp4');
+        
+        const stream = ytdl(url, {
+            quality: 'highest',
+            filter: format => format.container === 'mp4'
         });
         
-        // Get video info for filename
-        const info = await ytdlp(url, {
-            dumpSingleJson: true,
-            noCheckCertificates: true,
+        stream.pipe(res);
+        
+        stream.on('error', (error) => {
+            console.error('Stream error:', error.message);
+            if (!res.headersSent) {
+                res.status(500).json({ error: 'Download failed' });
+            }
         });
         
-        const title = info.title.replace(/[^\w\s-]/g, '').substring(0, 100);
-        
-        // Send file
-        res.download(outputPath, `${title}.mp4`, (err) => {
-            // Delete file after download
-            if (fs.existsSync(outputPath)) {
-                fs.unlinkSync(outputPath);
-            }
-            if (err) {
-                console.error('Download error:', err);
-            }
+        stream.on('end', () => {
+            console.log('MP4 download complete:', title);
         });
         
     } catch (error) {
-        console.error('Error downloading MP4:', error);
-        res.status(500).json({ error: 'Failed to download video' });
+        console.error('Error downloading MP4:', error.message);
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Failed to download video. Please try again.' });
+        }
     }
 });
 
 // Health check
 app.get('/api/health', (req, res) => {
+    console.log('Health check requested');
     res.json({ status: 'ok', message: 'Server is running' });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+    res.json({ message: 'YouTube Converter API', status: 'running' });
 });
 
 // Clean up old files on startup
@@ -169,7 +161,12 @@ function cleanupDownloads() {
         const files = fs.readdirSync(DOWNLOADS_DIR);
         files.forEach(file => {
             const filePath = path.join(DOWNLOADS_DIR, file);
-            fs.unlinkSync(filePath);
+            try {
+                fs.unlinkSync(filePath);
+                console.log('Cleaned up:', file);
+            } catch (err) {
+                console.error('Error cleaning file:', err);
+            }
         });
     }
 }
@@ -177,21 +174,29 @@ function cleanupDownloads() {
 cleanupDownloads();
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
+    const os = require('os');
+    const networkInterfaces = os.networkInterfaces();
+    let localIP = 'localhost';
+    
+    Object.keys(networkInterfaces).forEach(interfaceName => {
+        networkInterfaces[interfaceName].forEach(iface => {
+            if (iface.family === 'IPv4' && !iface.internal) {
+                localIP = iface.address;
+            }
+        });
+    });
+    
     console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
-║         YouTube Converter Server Running (yt-dlp)             ║
+║         YouTube Converter Server Running                      ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║                                                               ║
-║  Server URL: http://localhost:${PORT}                           ║
+║  Local:   http://localhost:${PORT}                              ║
+║  Network: http://${localIP}:${PORT}                        ║
 ║                                                               ║
-║  Using: yt-dlp (more stable than ytdl-core)                  ║
-║                                                               ║
-║  Endpoints:                                                   ║
-║  - POST /api/info        (Get video information)             ║
-║  - POST /api/download/mp3 (Download as MP3)                  ║
-║  - POST /api/download/mp4 (Download as MP4)                  ║
-║  - GET  /api/health      (Health check)                      ║
+║  Using: @distube/ytdl-core                                   ║
+║  Status: Ready to accept requests                            ║
 ║                                                               ║
 ╚═══════════════════════════════════════════════════════════════╝
     `);
